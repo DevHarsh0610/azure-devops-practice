@@ -1,0 +1,86 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  USER
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String
+  role         Role          @default(USER)
+  isActive     Boolean       @default(true)
+  avatarUrl    String?
+  deletedAt    DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  refreshTokens RefreshToken[]
+  assignedTasks Task[]         @relation("AssignedTasks")
+  createdTasks  Task[]         @relation("CreatedTasks")
+
+  @@index([email])
+  @@index([isActive])
+  @@index([deletedAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  dueDate     DateTime?
+  
+  assigneeId  String?
+  assignee    User?        @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  
+  creatorId   String
+  creator     User         @relation("CreatedTasks", fields: [creatorId], references: [id])
+  
+  deletedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([assigneeId])
+  @@index([creatorId])
+  @@index([status])
+  @@index([priority])
+  @@index([deletedAt])
+}

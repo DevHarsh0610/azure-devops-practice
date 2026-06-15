@@ -1,0 +1,13 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = '3001';
+process.env.API_VERSION = 'v1';
+process.env.DATABASE_URL = 'postgresql://mockuser:mockpassword@localhost:5432/mockdb';
+process.env.JWT_ACCESS_SECRET = 'my-super-secret-access-token-secret-key-32-chars-long';
+process.env.JWT_REFRESH_SECRET = 'my-super-secret-refresh-token-secret-key-32-chars-long';
+process.env.JWT_ACCESS_EXPIRES_IN = '15m';
+process.env.JWT_REFRESH_EXPIRES_IN = '7d';
+process.env.BCRYPT_ROUNDS = '4';
+process.env.ALLOWED_ORIGINS = 'http://localhost:3000,http://localhost:3001';
+process.env.LOG_LEVEL = 'error';
+process.env.LOG_DIR = 'logs';
+process.env.SWAGGER_ENABLED = 'false';

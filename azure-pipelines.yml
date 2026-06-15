@@ -20,5 +20,19 @@ stages:
             inputs:
               version: '20.x'
           
-          - script: npm install
-          - script: npm run build
+          - script: |
+              node --version
+              npm --version
+
+          - script: |
+              npm ci
+
+          - script: |
+              npx prisma validate
+
+          - script: |
+              npm run build
+          
+          - script: |
+              ls -la dist
+          

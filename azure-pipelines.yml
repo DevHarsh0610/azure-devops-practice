@@ -4,35 +4,63 @@
 # https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
 
 trigger:
-- main
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
 
 pool:
   vmImage: ubuntu-latest
 
 stages:
   - stage: Build
-    
-    jobs :
-      - job: BuildJob
+    displayName: 'CI & Code Quality Gate'
+
+    jobs:
+      - job: ValidateAndTest
+        displayName: 'Validate and Test'
 
         steps:
           - task: UseNode@1
             inputs:
               version: '20.x'
-          
+            displayName: 'Set Nodejs version'
+
           - script: |
               node --version
               npm --version
+            displayName: 'Check Nodejs and npm version'
 
-          - script: |
-              npm ci
+          - script: npm ci
+            displayName: 'Install dependencies'
 
-          - script: |
-              npx prisma validate
+          - script: npx prisma validate
+            displayName: 'Validate prisma schema'
 
-          - script: |
-              npm run build
+          - script: npm run lint
+            displayName: 'Check code quality'
+
+          - script: npm audit --audit-level=high
+            displayName: 'Scan Dependencies for Vulnerabilities'
+            continueOnError: true
           
-          - script: |
-              ls -la dist
+          - script: npm run test:coverage
+            displayName: 'Run unit tests'
+          
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'test-results/junit.xml'
+              failTaskOnFailedTests: true
+            displayName: 'Publish Test Results'
+
+          - script: npm run build
+            displayName: 'Build the application'
+
+          - script: ls -la dist
           

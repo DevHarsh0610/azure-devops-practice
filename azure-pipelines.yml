@@ -40,6 +40,8 @@ stages:
 
           - script: npx prisma validate
             displayName: 'Validate prisma schema'
+            env:
+              DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
 
           - script: npm run lint
             displayName: 'Check code quality'

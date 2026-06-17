@@ -16,8 +16,13 @@ pr:
 pool:
   vmImage: ubuntu-latest
 
+variables:
+  imageRepository: 'dockerharsh10/devops-practice-backend' # Update with your DockerHub/ACR username
+  containerRegistry: 'dockerhub-service-principal' # The name from Step 1
+  tag: '$(Build.BuildId)'
+
 stages:
-  - stage: Build
+  - stage: CI_Validation
     displayName: 'CI & Code Quality Gate'
 
     jobs:
@@ -65,3 +70,23 @@ stages:
             displayName: 'Build the application'
 
           - script: ls -la dist
+  - stage: Build_Artifact
+    displayName:'Build and Push Docker Image'
+    dependsOn: CI_Validation
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+    jobs:
+      - job: BuildAndPush
+        displayName: 'Build and push to container registry'
+
+        steps:
+        - task: Docker@2
+          displayName: 'Build And Push Container'
+          inputs:
+            command: 'BuildAndPush'
+            repository: '$(imageRepository)'
+            dockerfile: '**/Dockerfile'
+            containerRegistry: '$(containerRegistry)'
+            tags: |
+              $(tag)
+              latest

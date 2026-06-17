@@ -65,4 +65,3 @@ stages:
             displayName: 'Build the application'
 
           - script: ls -la dist
-          

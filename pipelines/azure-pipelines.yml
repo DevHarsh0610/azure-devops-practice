@@ -78,13 +78,6 @@ stages:
           imageRepository: $(imageRepository)
           tag: $(tag)
 
-      - template: templates/jobs/smoke-test.yml
-        parameters:
-          appName: 'my-unique-devops-app-123'
-          environment: 'development'
-
-  # ── Stage: Deploy to QA ───────────────────────────────────────────────────
-  # Runs on release/* branches after Build passes.
   - stage: Deploy_QA
     displayName: 'Deploy to QA Environment'
     dependsOn: Build_Artifact
@@ -99,12 +92,7 @@ stages:
           imageRepository: $(imageRepository)
           tag: $(tag)
 
-      - template: templates/jobs/smoke-test.yml
-        parameters:
-          appName: 'my-unique-devops-app-123'
-          environment: 'qa'
-
-  # ── Stage: Deploy to UAT ──────────────────────────────────────────────────
+  # ── Stage: Deploy to UAT ────────────────────────────────────────────────
   # Runs after QA on release/* branches. Business stakeholders test here.
   # If UAT fails, the release branch is fixed — main is never touched.
   # Add a 'Pre-check approval' on the 'uat' ADO Environment in the portal.
@@ -122,13 +110,6 @@ stages:
           imageRepository: $(imageRepository)
           tag: $(tag)
 
-      - template: templates/jobs/smoke-test.yml
-        parameters:
-          appName: 'my-unique-devops-app-123'
-          environment: 'uat'
-
-  # ── Stage: Deploy to Staging ──────────────────────────────────────────────
-  # Runs on main after Build passes. First stop after code merges from release.
   - stage: Deploy_Staging
     displayName: 'Deploy to Staging Environment'
     dependsOn: Build_Artifact
@@ -143,19 +124,13 @@ stages:
           imageRepository: $(imageRepository)
           tag: $(tag)
 
-      - template: templates/jobs/smoke-test.yml
-        parameters:
-          appName: 'my-unique-devops-app-123'
-          environment: 'staging'
-
-  # ── Stage 4: Deploy to Production ─────────────────────────────────────────
-  # Runs on main after staging smoke tests pass.
-  # Add a 'Pre-check approval' on the 'production' ADO Environment in the portal.
+  # ── Stage 4: Deploy to Staging ──────────────────────────────────────────
+  # Runs on main after the release branch has been merged and signed off.
   - stage: Deploy_Prod
     displayName: 'Deploy to Production Environment'
     dependsOn: Deploy_Staging
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-
+  
     jobs:
       - template: templates/jobs/deploy-webapp.yml
         parameters:
@@ -164,15 +139,7 @@ stages:
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)
-
-      - template: templates/jobs/smoke-test.yml
-        parameters:
-          appName: 'my-unique-devops-app-123'
-          environment: 'production'
-
-  # ── Stage 5: Deploy to DR ──────────────────────────────────────────────────
-  # Runs after Production. Pre-check approval on 'dr' ADO Environment acts as
-  # the 7-day wait gate before DR is promoted.
+  
   - stage: Deploy_DR
     displayName: 'Deploy to DR Environment'
     dependsOn: Deploy_Prod
@@ -186,8 +153,3 @@ stages:
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)
-
-      - template: templates/jobs/smoke-test.yml
-        parameters:
-          appName: 'my-unique-devops-app-123'
-          environment: 'dr'

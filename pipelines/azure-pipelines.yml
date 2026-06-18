@@ -91,6 +91,7 @@ stages:
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)
+
   - stage: Deploy_Staging
     displayName: 'Deploy to Staging Environment'
     dependsOn: Build_Artifact
@@ -104,6 +105,7 @@ stages:
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)
+
   # ── Stage 4: Deploy to Production (EXAMPLE — add when ready) ─────────────
   # Uncomment this block when you need a production deployment.
   # The 'production' Azure DevOps Environment can have an approval gate,

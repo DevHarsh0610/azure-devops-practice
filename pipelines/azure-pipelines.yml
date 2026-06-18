@@ -119,8 +119,8 @@ stages:
     jobs:
       - template: templates/jobs/deploy-webapp.yml
         parameters:
-          environment: 'production'                    # ← different environment
-          appName: 'my-unique-devops-app-prod'         # ← different app name
+          environment: 'production'
+          appName: 'my-unique-devops-app-123'           # TODO: replace with real prod App Service once provisioned
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)
@@ -134,7 +134,7 @@ stages:
       - template: templates/jobs/deploy-webapp.yml
         parameters:
           environment: 'dr'
-          appName: 'my-unique-devops-app-dr'
+          appName: 'my-unique-devops-app-123'           # TODO: replace with real DR App Service once provisioned
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)

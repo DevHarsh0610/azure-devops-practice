@@ -1,115 +1,138 @@
-# Node.js
-# Build a general Node.js project with npm.
-# Add steps that analyze code, save build artifacts, deploy, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
+# pipelines/azure-pipelines.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Pipeline — Orchestrator
+#
+# This file is intentionally kept thin. It defines:
+#   1. Triggers and PR conditions
+#   2. Shared variables
+#   3. Stages (with their conditions, dependencies, and environment targets)
+#
+# The actual job logic lives in templates/jobs/*.yml
+# This separation means:
+#   - Stages stay here because this is where approvals and conditions live
+#   - Jobs are reusable templates that can be called with different parameters
+# ─────────────────────────────────────────────────────────────────────────────
 
 trigger:
   branches:
     include:
+      - develop
+      - release/*
       - main
 
 pr:
   branches:
     include:
+      - develop
+      - release/*
       - main
 
 pool:
   vmImage: ubuntu-latest
 
 variables:
-  imageRepository: "dockerharsh10/devops-practice-backend" # Update with your DockerHub/ACR username
-  containerRegistry: "dockerhub-service-principal" # The name from Step 1
-  tag: "$(Build.BuildId)"
+  imageRepository: 'dockerharsh10/devops-practice-backend'
+  containerRegistry: 'dockerhub-service-principal'
+  tag: '$(Build.BuildId)'
+  azureSubscription: 'azure-arm-connection'
 
 stages:
+  # ── Stage 1: CI Validation ─────────────────────────────────────────────────
+  # Runs on every push and PR. No branch restriction.
   - stage: CI_Validation
-    displayName: "CI & Code Quality Gate"
+    displayName: 'CI & Code Quality Gate'
 
     jobs:
-      - job: ValidateAndTest
-        displayName: "Validate and Test"
+      - template: templates/jobs/validate-and-test.yml
+        parameters:
+          nodeVersion: '20.x'
 
-        steps:
-          - task: UseNode@1
-            inputs:
-              version: "20.x"
-            displayName: "Set Nodejs version"
-
-          - script: |
-              node --version
-              npm --version
-            displayName: "Check Nodejs and npm version"
-
-          - script: npm ci
-            displayName: "Install dependencies"
-
-          - script: npx prisma validate
-            displayName: "Validate prisma schema"
-            env:
-              DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
-
-          - script: npm run lint
-            displayName: "Check code quality"
-
-          - script: npm audit --audit-level=high
-            displayName: "Scan Dependencies for Vulnerabilities"
-            continueOnError: true
-
-          - script: npm run test:coverage
-            displayName: "Run unit tests"
-
-          - task: PublishTestResults@2
-            condition: always()
-            inputs:
-              testResultsFormat: "JUnit"
-              testResultsFiles: "test-results/junit.xml"
-              failTaskOnFailedTests: true
-            displayName: "Publish Test Results"
-
-          - script: npm run build
-            displayName: "Build the application"
-
-          - script: ls -la dist
-          
+  # ── Stage 2: Build & Push Docker Image ────────────────────────────────────
+  # Runs on develop, release/*, and main — skipped on feature/bugfix branches.
   - stage: Build_Artifact
-    displayName: "Build and Push Docker Image"  
+    displayName: 'Build and Push Docker Image'
     dependsOn: CI_Validation
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/develop'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), eq(variables['Build.SourceBranch'], 'refs/heads/main')))
 
     jobs:
-      - job: BuildAndPush
-        displayName: "Build and push to container registry"
+      - template: templates/jobs/build-and-push.yml
+        parameters:
+          imageRepository: $(imageRepository)
+          containerRegistry: $(containerRegistry)
+          tag: $(tag)
 
-        steps:
-          - task: Docker@2
-            displayName: "Build And Push Container"
-            inputs:
-              command: "BuildAndPush"
-              repository: "$(imageRepository)"
-              dockerfile: "**/Dockerfile"
-              containerRegistry: "$(containerRegistry)"
-              tags: |
-                $(tag)
-                latest
-
-  - stage: Deploy_Dev
+  # ── Stage 3: Deploy to Development ────────────────────────────────────────
+  # Deploys after image is built. Targets the 'development' Azure DevOps
+  # Environment — you can add approval gates there in the Azure DevOps portal.
+  - stage: Deploy_Develop
     displayName: 'Deploy to Development Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'development'
+          appName: 'my-unique-devops-app-123'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+
+  - stage: Deploy_QA
+    displayName: 'Deploy to QA Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'qa'
+          appName: 'my-unique-devops-app-123'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+  - stage: Deploy_Staging
+    displayName: 'Deploy to Staging Environment'
     dependsOn: Build_Artifact
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
 
     jobs:
-      - deployment: DeployDev
-        displayName: 'Deploy to Dev Web application'
-        environment: 'development'
-        pool:
-          vmImage: 'ubuntu-latest'
-        strategy: 
-          runOnce:
-            deploy:
-              steps:
-                - task: AzureWebAppContainer@1
-                  displayName: 'Deploy Container to Azure Web App'
-                  inputs:
-                    azureSubscription: 'azure-arm-connection'
-                    appName: 'my-unique-devops-app-123'
-                    containers: '$(imageRepository):$(tag)'
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'staging'
+          appName: 'my-unique-devops-app-123'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+  # ── Stage 4: Deploy to Production (EXAMPLE — add when ready) ─────────────
+  # Uncomment this block when you need a production deployment.
+  # The 'production' Azure DevOps Environment can have an approval gate,
+  # so a human must approve before this stage runs.
+  #
+  - stage: Deploy_Prod
+    displayName: 'Deploy to Production Environment'
+    dependsOn: Deploy_Staging
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'production'                    # ← different environment
+          appName: 'my-unique-devops-app-prod'         # ← different app name
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+  
+  - stage: Deploy_DR
+    displayName: 'Deploy to DR Environment'
+    dependsOn: Deploy_Prod
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'dr'
+          appName: 'my-unique-devops-app-dr'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)

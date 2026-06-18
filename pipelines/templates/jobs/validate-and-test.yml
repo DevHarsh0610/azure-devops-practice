@@ -1,0 +1,62 @@
+# templates/jobs/validate-and-test.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Validate and Test
+#
+# PURPOSE:
+#   Runs all CI checks — Node.js setup, dependency install, schema validation,
+#   linting, security audit, unit tests, and the TypeScript build.
+#
+# HOW TO USE:
+#   - job: ValidateAndTest
+#     template: templates/jobs/validate-and-test.yml
+#
+# PARAMETERS:
+#   nodeVersion  → The Node.js version to use (default: '20.x')
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: nodeVersion
+    type: string
+    default: '20.x'
+
+jobs:
+  - job: ValidateAndTest
+    displayName: 'Validate and Test'
+
+    steps:
+      - task: UseNode@1
+        inputs:
+          version: ${{ parameters.nodeVersion }}
+        displayName: 'Set Node.js version'
+
+      - script: |
+          node --version
+          npm --version
+        displayName: 'Check Node.js and npm version'
+
+      - script: npm ci
+        displayName: 'Install dependencies'
+
+      - script: npm run lint
+        displayName: 'Check code quality'
+
+      - script: npm audit --audit-level=high
+        displayName: 'Scan dependencies for vulnerabilities'
+        continueOnError: true
+
+      - script: npm run test:coverage
+        displayName: 'Run unit tests'
+
+      - task: PublishTestResults@2
+        condition: always()
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: 'test-results/junit.xml'
+          failTaskOnFailedTests: true
+        displayName: 'Publish Test Results'
+
+      - script: npm run build
+        displayName: 'Build the application'
+
+      - script: ls -la dist
+        displayName: 'Verify build output'

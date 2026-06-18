@@ -1,0 +1,81 @@
+# templates/jobs/deploy-webapp.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Deploy Azure Web App Container
+#
+# PURPOSE:
+#   Deploys a Docker container image to an Azure App Service (Web App for
+#   Containers). This template is designed to be reused across multiple
+#   environments (dev, staging, production) simply by passing different
+#   parameters.
+#
+# HOW TO USE:
+#   In your main pipeline stage, reference this template like this:
+#
+#     - stage: Deploy_Dev
+#       jobs:
+#         - template: templates/jobs/deploy-webapp.yml
+#           parameters:
+#             environment: 'development'
+#             appName: 'my-unique-devops-app-123'
+#             azureSubscription: 'azure-arm-connection'
+#             imageRepository: $(imageRepository)
+#             tag: $(tag)
+#
+# WHY THE STAGE STAYS IN THE MAIN PIPELINE:
+#   The `stage` block in the main pipeline is where you configure:
+#     - Which Azure DevOps Environment to target (for approval gates)
+#     - The `dependsOn` order between stages
+#     - Branch conditions (e.g. only deploy from main)
+#   These are orchestration concerns. The actual deployment steps (this file)
+#   are reusable logic that doesn't change between environments.
+#
+# PARAMETERS:
+#   environment       → Azure DevOps Environment name (used for approval gates)
+#   appName           → Azure App Service name to deploy to
+#   azureSubscription → Azure service connection name
+#   imageRepository   → Docker image name (e.g. dockerharsh10/devops-practice-backend)
+#   tag               → Image tag to deploy (usually the Build.BuildId)
+#   vmImage           → Agent pool VM image (default: ubuntu-latest)
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: environment
+    type: string
+
+  - name: appName
+    type: string
+
+  - name: azureSubscription
+    type: string
+
+  - name: imageRepository
+    type: string
+
+  - name: tag
+    type: string
+
+  - name: vmImage
+    type: string
+    default: 'ubuntu-latest'
+
+jobs:
+  - deployment: DeployWebApp
+    displayName: 'Deploy to ${{ parameters.environment }}'
+
+    # The environment name here links to Azure DevOps Environments.
+    # You can add approval gates, deployment history, and security checks there.
+    environment: ${{ parameters.environment }}
+
+    pool:
+      vmImage: ${{ parameters.vmImage }}
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - task: AzureWebAppContainer@1
+              displayName: 'Deploy Container to Azure Web App'
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                appName: ${{ parameters.appName }}
+                containers: '${{ parameters.imageRepository }}:${{ parameters.tag }}'

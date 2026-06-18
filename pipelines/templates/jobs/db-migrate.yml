@@ -1,0 +1,65 @@
+# templates/jobs/db-migrate.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: DB Migrate Deploy
+#
+# PURPOSE:
+#   Runs `prisma migrate deploy` to apply all pending migrations against
+#   a real PostgreSQL database. Uses a deployment job so that an Azure DevOps
+#   Environment approval gate can block execution until a human approves.
+#
+# HOW TO USE:
+#   jobs:
+#     - template: templates/jobs/db-migrate.yml
+#       parameters:
+#         environment: 'db-development'
+#         databaseUrl: $(DEV_DATABASE_URL)
+#
+# PARAMETERS:
+#   environment   → Azure DevOps Environment name (configure approval gates there)
+#   databaseUrl   → Real PostgreSQL connection string (inject from variable group, keep secret)
+#   nodeVersion   → The Node.js version to use (default: '20.x')
+#
+# PREREQUISITES:
+#   - A variable group named 'db-pipeline-vars' must exist in Azure DevOps Library
+#     with DEV_DATABASE_URL and PROD_DATABASE_URL as secret variables.
+#   - The Azure DevOps Environment must exist in the portal. Add an approval gate
+#     to the 'db-production' environment to require manual approval before prod migrations.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: environment
+    type: string
+  - name: databaseUrl
+    type: string
+  - name: nodeVersion
+    type: string
+    default: '20.x'
+
+jobs:
+  - deployment: DB_Migrate_${{ parameters.environment }}
+    displayName: 'Run Prisma Migrations — ${{ parameters.environment }}'
+    environment: ${{ parameters.environment }}
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+              displayName: 'Checkout repository'
+
+            - task: UseNode@1
+              inputs:
+                version: ${{ parameters.nodeVersion }}
+              displayName: 'Set Node.js version'
+
+            - script: npm ci
+              workingDirectory: backend
+              displayName: 'Install dependencies'
+
+            - script: npx prisma migrate deploy --schema=prisma/schema.prisma
+              workingDirectory: backend
+              displayName: 'Apply pending Prisma migrations'
+              env:
+                # Injected from the 'db-pipeline-vars' variable group.
+                # This connects to the REAL database — handle with care.
+                DATABASE_URL: ${{ parameters.databaseUrl }}

@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response } from 'express';
 import * as TaskService from '../services/task.service.js';
 import { sendResponse } from '../utils/apiResponse.js';
 import { catchAsync } from '../utils/catchAsync.js';

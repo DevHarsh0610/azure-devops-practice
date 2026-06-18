@@ -92,6 +92,24 @@ stages:
           imageRepository: $(imageRepository)
           tag: $(tag)
 
+  # ── Stage: Deploy to UAT ────────────────────────────────────────────────
+  # Runs after QA on release/* branches. Business stakeholders test here.
+  # If UAT fails, the release branch is fixed — main is never touched.
+  # Add a 'Pre-check approval' on the 'uat' ADO Environment in the portal.
+  - stage: Deploy_UAT
+    displayName: 'Deploy to UAT Environment'
+    dependsOn: Deploy_QA
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'uat'
+          appName: 'my-unique-devops-app-123'           # TODO: replace with real UAT App Service once provisioned
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+
   - stage: Deploy_Staging
     displayName: 'Deploy to Staging Environment'
     dependsOn: Build_Artifact
@@ -106,11 +124,8 @@ stages:
           imageRepository: $(imageRepository)
           tag: $(tag)
 
-  # ── Stage 4: Deploy to Production (EXAMPLE — add when ready) ─────────────
-  # Uncomment this block when you need a production deployment.
-  # The 'production' Azure DevOps Environment can have an approval gate,
-  # so a human must approve before this stage runs.
-  #
+  # ── Stage 4: Deploy to Staging ──────────────────────────────────────────
+  # Runs on main after the release branch has been merged and signed off.
   - stage: Deploy_Prod
     displayName: 'Deploy to Production Environment'
     dependsOn: Deploy_Staging

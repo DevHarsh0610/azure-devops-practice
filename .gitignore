@@ -137,3 +137,9 @@ db.json
 *.db-journal
 *.sqlite
 *.sqlite-journal
+# Monorepo: backend build artifacts
+backend/node_modules/
+backend/dist/
+backend/coverage/
+backend/test-results/
+backend/.env

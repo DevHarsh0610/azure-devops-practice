@@ -1,0 +1,88 @@
+# pipelines/database-pipeline.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Database Pipeline — Orchestrator
+#
+# This pipeline is SEPARATE from the main CI/CD pipeline (azure-pipelines.yml).
+# It ONLY triggers when database-related files change, keeping it decoupled
+# from application code changes.
+#
+# STAGES:
+#   1. DB_Validate     → Runs on ALL branches (PR + push). No real DB needed.
+#   2. DB_Migrate_Dev  → Runs on 'develop' push only. Migrates dev database.
+#   3. DB_Migrate_Prod → Runs on 'main' push only. Migrates prod database.
+#                        Requires approval gate on 'db-production' ADO Environment.
+#
+# PREREQUISITES:
+#   - Create a variable group named 'db-pipeline-vars' in Azure DevOps Library:
+#       DEV_DATABASE_URL  (secret) → postgresql://user:pass@dev-host:5432/devdb
+#       PROD_DATABASE_URL (secret) → postgresql://user:pass@prod-host:5432/proddb
+#   - Register this file as a separate pipeline in the Azure DevOps portal.
+#   - Add an approval gate to the 'db-production' Environment in ADO portal.
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - develop
+      - main
+  paths:
+    include:
+      - backend/prisma/**/*
+      - database/**/*
+
+pr:
+  branches:
+    include:
+      - develop
+      - main
+  paths:
+    include:
+      - backend/prisma/**/*
+      - database/**/*
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: db-pipeline-vars   # Contains DEV_DATABASE_URL and PROD_DATABASE_URL as secrets
+
+stages:
+  # ── Stage 1: Schema Validation ─────────────────────────────────────────────
+  # Runs on every PR and every push. No real database connection.
+  # Catches schema syntax errors early before any migration is attempted.
+  - stage: DB_Validate
+    displayName: 'Validate DB Schema'
+
+    jobs:
+      - template: templates/jobs/db-validate.yml
+        parameters:
+          nodeVersion: '20.x'
+
+  # ── Stage 2: Migrate Development Database ──────────────────────────────────
+  # Runs only on pushes to 'develop'. Applies pending migrations to dev DB.
+  # DATABASE_URL is injected from the 'db-pipeline-vars' variable group (secret).
+  - stage: DB_Migrate_Dev
+    displayName: 'Migrate Dev Database'
+    dependsOn: DB_Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+
+    jobs:
+      - template: templates/jobs/db-migrate.yml
+        parameters:
+          environment: 'db-development'
+          databaseUrl: $(DEV_DATABASE_URL)
+
+  # ── Stage 3: Migrate Production Database ───────────────────────────────────
+  # Runs only on pushes to 'main'. Applies pending migrations to prod DB.
+  # IMPORTANT: Add an approval gate to 'db-production' in the ADO Environment
+  # portal — a human must approve before this stage executes.
+  - stage: DB_Migrate_Prod
+    displayName: 'Migrate Production Database'
+    dependsOn: DB_Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+    jobs:
+      - template: templates/jobs/db-migrate.yml
+        parameters:
+          environment: 'db-production'
+          databaseUrl: $(PROD_DATABASE_URL)

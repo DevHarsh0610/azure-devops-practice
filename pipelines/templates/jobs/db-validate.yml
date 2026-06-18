@@ -1,0 +1,45 @@
+# templates/jobs/db-validate.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: DB Schema Validate
+#
+# PURPOSE:
+#   Validates the Prisma schema for syntax correctness only.
+#   Does NOT connect to a real database.
+#   Safe to run on every PR and every branch.
+#
+# HOW TO USE:
+#   jobs:
+#     - template: templates/jobs/db-validate.yml
+#       parameters:
+#         nodeVersion: '20.x'
+#
+# PARAMETERS:
+#   nodeVersion  → The Node.js version to use (default: '20.x')
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: nodeVersion
+    type: string
+    default: '20.x'
+
+jobs:
+  - job: DB_Schema_Validate
+    displayName: 'Validate Prisma Schema'
+
+    steps:
+      - task: UseNode@1
+        inputs:
+          version: ${{ parameters.nodeVersion }}
+        displayName: 'Set Node.js version'
+
+      - script: npm ci
+        workingDirectory: backend
+        displayName: 'Install dependencies'
+
+      - script: npx prisma validate --schema=prisma/schema.prisma
+        workingDirectory: backend
+        displayName: 'Validate Prisma schema (syntax check)'
+        env:
+          # Dummy URL — prisma validate does not connect to a real database.
+          # It only parses the schema file for syntax errors.
+          DATABASE_URL: 'postgresql://dummy:dummy@localhost:5432/dummy'

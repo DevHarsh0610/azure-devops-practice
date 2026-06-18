@@ -1,0 +1,46 @@
+# templates/jobs/build-and-push.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Build and Push Docker Image
+#
+# PURPOSE:
+#   Builds the Docker image from the Dockerfile and pushes it to the
+#   configured container registry with both the build ID tag and 'latest'.
+#
+# HOW TO USE:
+#   - template: templates/jobs/build-and-push.yml
+#     parameters:
+#       imageRepository: $(imageRepository)
+#       containerRegistry: $(containerRegistry)
+#       tag: $(tag)
+#
+# PARAMETERS:
+#   imageRepository  → Full image name (e.g. dockerharsh10/devops-practice-backend)
+#   containerRegistry → Service connection name for the container registry
+#   tag              → Image tag (usually the Build.BuildId)
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: imageRepository
+    type: string
+
+  - name: containerRegistry
+    type: string
+
+  - name: tag
+    type: string
+
+jobs:
+  - job: BuildAndPush
+    displayName: 'Build and Push to Container Registry'
+
+    steps:
+      - task: Docker@2
+        displayName: 'Build and Push Container Image'
+        inputs:
+          command: 'buildAndPush'
+          repository: ${{ parameters.imageRepository }}
+          dockerfile: '**/Dockerfile'
+          containerRegistry: ${{ parameters.containerRegistry }}
+          tags: |
+            ${{ parameters.tag }}
+            latest

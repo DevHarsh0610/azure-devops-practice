@@ -1,0 +1,140 @@
+# pipelines/azure-pipelines.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Pipeline — Orchestrator
+#
+# This file is intentionally kept thin. It defines:
+#   1. Triggers and PR conditions
+#   2. Shared variables
+#   3. Stages (with their conditions, dependencies, and environment targets)
+#
+# The actual job logic lives in templates/jobs/*.yml
+# This separation means:
+#   - Stages stay here because this is where approvals and conditions live
+#   - Jobs are reusable templates that can be called with different parameters
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+
+pr:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageRepository: 'dockerharsh10/devops-practice-backend'
+  containerRegistry: 'dockerhub-service-principal'
+  tag: '$(Build.BuildId)'
+  azureSubscription: 'azure-arm-connection'
+
+stages:
+  # ── Stage 1: CI Validation ─────────────────────────────────────────────────
+  # Runs on every push and PR. No branch restriction.
+  - stage: CI_Validation
+    displayName: 'CI & Code Quality Gate'
+
+    jobs:
+      - template: templates/jobs/validate-and-test.yml
+        parameters:
+          nodeVersion: '20.x'
+
+  # ── Stage 2: Build & Push Docker Image ────────────────────────────────────
+  # Runs on develop, release/*, and main — skipped on feature/bugfix branches.
+  - stage: Build_Artifact
+    displayName: 'Build and Push Docker Image'
+    dependsOn: CI_Validation
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/develop'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), eq(variables['Build.SourceBranch'], 'refs/heads/main')))
+
+    jobs:
+      - template: templates/jobs/build-and-push.yml
+        parameters:
+          imageRepository: $(imageRepository)
+          containerRegistry: $(containerRegistry)
+          tag: $(tag)
+
+  # ── Stage 3: Deploy to Development ────────────────────────────────────────
+  # Deploys after image is built. Targets the 'development' Azure DevOps
+  # Environment — you can add approval gates there in the Azure DevOps portal.
+  - stage: Deploy_Develop
+    displayName: 'Deploy to Development Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'development'
+          appName: 'my-unique-devops-app-123'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+
+  - stage: Deploy_QA
+    displayName: 'Deploy to QA Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'qa'
+          appName: 'my-unique-devops-app-123'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+
+  - stage: Deploy_Staging
+    displayName: 'Deploy to Staging Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'staging'
+          appName: 'my-unique-devops-app-123'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+
+  # ── Stage 4: Deploy to Production (EXAMPLE — add when ready) ─────────────
+  # Uncomment this block when you need a production deployment.
+  # The 'production' Azure DevOps Environment can have an approval gate,
+  # so a human must approve before this stage runs.
+  #
+  - stage: Deploy_Prod
+    displayName: 'Deploy to Production Environment'
+    dependsOn: Deploy_Staging
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'production'                    # ← different environment
+          appName: 'my-unique-devops-app-prod'         # ← different app name
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+  
+  - stage: Deploy_DR
+    displayName: 'Deploy to DR Environment'
+    dependsOn: Deploy_Prod
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+    jobs:
+      - template: templates/jobs/deploy-webapp.yml
+        parameters:
+          environment: 'dr'
+          appName: 'my-unique-devops-app-dr'
+          azureSubscription: $(azureSubscription)
+          imageRepository: $(imageRepository)
+          tag: $(tag)

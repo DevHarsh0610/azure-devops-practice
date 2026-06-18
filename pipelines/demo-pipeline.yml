@@ -1,0 +1,150 @@
+trigger: 
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+  paths:
+    include:
+      - src/*
+
+pr: 
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+  paths:
+    include:
+      - src/*
+
+pool: 
+  vmImage: 'ubuntu-latest'
+
+variables:
+  # - group: backend-demo-vars
+  - name: tag
+    value: $(Build.BuildId)
+
+stages:
+  - stage: Build_and_Push
+    displayName: "Build and Push Docker"
+    jobs:
+      - job: BuildAndPush
+        displayName: "Build and Push Docker"
+        # steps:
+        #   - task: Docker@2
+        #     displayName: "Build and Push Docker"
+        #     inputs:
+        #       command: "BuildAndPush"
+        #       repository: "$(imageRepository)"
+        #       dockerfile: "**/Dockerfile"
+        #       containerRegistry: "$(containerRegistry)"
+        #       tags: |
+        #         $(tag)
+        #         latest
+
+  - stage: Deploy_Develop
+    displayName: "Deploy to Develop Environment"
+    dependsOn: Build_and_Push
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - deployment: DeployDevelop
+        displayName: "Deploy to Develop Web application"
+        environment: 'development'
+        # pool:
+        #   vmImage: 'ubuntu-latest'
+        # strategy: 
+        #   runOnce:
+        #     deploy:
+        #       steps:
+        #         - task: AzureWebAppContainer@1
+        #           displayName: 'Deploy Container to Azure Web App'
+        #           inputs:
+        #             azureSubscription: 'azure-arm-connection'
+        #             appName: 'my-unique-devops-app-123'
+        #             containers: '$(imageRepository):$(tag)'
+                
+  - stage: Deploy_QA
+    displayName: "Deploy to QA Environment"
+    dependsOn: Build_and_Push
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - deployment: DeployQA
+        displayName: "Deploy to QA Web application"
+        environment: 'qa'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy: 
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy Container to Azure Web App'
+                  inputs:
+                    azureSubscription: 'azure-arm-connection'
+                    appName: 'my-unique-devops-app-123'
+                    containers: '$(imageRepository):$(tag)'
+
+  - stage: Deploy_Staging
+    displayName: "Deploy to Staging Environment"
+    dependsOn: Build_and_Push
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployStaging
+        displayName: "Deploy to Staging Web application"
+        environment: 'staging'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy: 
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy Container to Azure Web App'
+                  inputs:
+                    azureSubscription: 'azure-arm-connection'
+                    appName: 'my-unique-devops-app-123'
+                    containers: '$(imageRepository):$(tag)'
+
+  - stage: Deploy_Production
+    displayName: "Deploy to Production Environment"
+    dependsOn: Deploy_Staging
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployProduction
+        displayName: "Deploy to Production Web application"
+        environment: 'production'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy: 
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy Container to Azure Web App'
+                  inputs:
+                    azureSubscription: 'azure-arm-connection'
+                    appName: 'my-unique-devops-app-123'
+                    containers: '$(imageRepository):$(tag)'
+
+  - stage: Deploy_DR
+    displayName: "Deploy to DR Environment"
+    dependsOn: Deploy_Production
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployDR
+        displayName: "Deploy to DR Web application"
+        environment: 'dr'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy: 
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy Container to Azure Web App'
+                  inputs:
+                    azureSubscription: 'azure-arm-connection'
+                    appName: 'my-unique-devops-app-123'
+                    containers: '$(imageRepository):$(tag)'

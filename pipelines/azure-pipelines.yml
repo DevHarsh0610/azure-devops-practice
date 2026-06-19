@@ -34,7 +34,7 @@ pr:
       - backend/**
 
 pool:
-  name: MyCustomPool
+  vmImage: ubuntu-latest
 
 variables:
   - group: backend-release-vars

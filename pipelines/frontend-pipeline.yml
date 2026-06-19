@@ -1,0 +1,158 @@
+# pipelines/frontend-pipeline.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Frontend Pipeline — Orchestrator
+#
+# DEFINES:
+#   1. Triggers restricted to frontend/ changes.
+#   2. Stages for lint, security, build, and environment deployments.
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+  paths:
+    include:
+      - frontend/**
+
+pr:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+  paths:
+    include:
+      - frontend/**
+
+pool:
+  name: MyCustomPool
+
+variables:
+  - group: backend-release-vars
+
+stages:
+  # ── Stage 1: CI Validation & Security ──────────────────────────────────────
+  - stage: CI_Validation
+    displayName: 'CI & Code Quality Gate'
+    jobs:
+      - template: templates/jobs/frontend-test-validation.yml
+        parameters:
+          nodeVersion: '24.x'
+      - template: templates/jobs/trivy-fs-scan.yml
+        parameters:
+          scanDir: 'frontend'
+          severity: 'CRITICAL'
+
+  # ── Stage 2: Build Artifact ────────────────────────────────────────────────
+  - stage: Build_Artifact
+    displayName: 'Compile and Package Bundle'
+    dependsOn: CI_Validation
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/develop'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), eq(variables['Build.SourceBranch'], 'refs/heads/main')))
+    jobs:
+      - template: templates/jobs/frontend-build.yml
+        parameters:
+          nodeVersion: '24.x'
+
+  # ── Stage 3: Deploy to Development ────────────────────────────────────────
+  - stage: Deploy_Develop
+    displayName: 'Deploy to Development Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - template: templates/jobs/deploy-static-web-app.yml
+        parameters:
+          environment: 'development'
+          apiToken: $(staticWebAppTokenDev)
+
+  # ── Stage 4: Deploy to QA ──────────────────────────────────────────────────
+  - stage: Deploy_QA
+    displayName: 'Deploy to QA Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: templates/jobs/deploy-static-web-app.yml
+        parameters:
+          environment: 'qa'
+          apiToken: $(staticWebAppTokenQA)
+
+  # ── Stage 5: Deploy to UAT ─────────────────────────────────────────────────
+  - stage: Deploy_UAT
+    displayName: 'Deploy to UAT Environment'
+    dependsOn: Deploy_QA
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: templates/jobs/deploy-static-web-app.yml
+        parameters:
+          environment: 'uat'
+          apiToken: $(staticWebAppTokenUAT)
+
+  # ── Stage 6: Deploy to Staging ─────────────────────────────────────────────
+  - stage: Deploy_Staging
+    displayName: 'Deploy to Staging Environment'
+    dependsOn: Build_Artifact
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/deploy-static-web-app.yml
+        parameters:
+          environment: 'staging'
+          apiToken: $(staticWebAppTokenStaging)
+
+  # ── Stage: Deploy Frontend Canary ──────────────────────────────────────────
+  - stage: Deploy_Canary
+    displayName: 'Deploy Frontend Canary'
+    dependsOn: Deploy_Staging
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/deploy-static-web-app.yml
+        parameters:
+          environment: 'production'
+          apiToken: $(staticWebAppTokenProd)
+          deployCanary: true
+          environmentName: 'canary'
+          appName: $(staticWebAppName)
+          resourceGroupName: $(resourceGroupName)
+          azureSubscription: $(azureSubscription)
+
+  # ── Stage: DAST Scan on Canary ──────────────────────────────────────────────
+  - stage: Dast_Scan
+    displayName: 'DAST Scan on Canary'
+    dependsOn: Deploy_Canary
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    variables:
+      - name: SWA_URL
+        value: $[ stageDependencies.Deploy_Canary.DeployStaticWebApp.outputs['DeployStaticWebApp.ValidateSwa.StaticWebAppUrl'] ]
+    jobs:
+      - template: templates/jobs/dast-scan.yml
+        parameters:
+          targetUrl: $(SWA_URL)
+          environmentName: 'canary'
+          dependsOn: ''
+
+  # ── Stage 7: Deploy to Production ──────────────────────────────────────────
+  - stage: Deploy_Prod
+    displayName: 'Deploy to Production Environment'
+    dependsOn: Dast_Scan
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/deploy-static-web-app.yml
+        parameters:
+          environment: 'production'
+          apiToken: $(staticWebAppTokenProd)
+          deployCanary: false
+          appName: $(staticWebAppName)
+          resourceGroupName: $(resourceGroupName)
+          azureSubscription: $(azureSubscription)
+
+  # ── Stage 8: Deploy to DR ──────────────────────────────────────────────────
+  - stage: Deploy_DR
+    displayName: 'Deploy to DR Environment'
+    dependsOn: Deploy_Prod
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/deploy-static-web-app.yml
+        parameters:
+          environment: 'dr'
+          apiToken: $(staticWebAppTokenDR)

@@ -1,0 +1,52 @@
+# pipelines/templates/jobs/frontend-build.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Frontend Build and Publish
+#
+# PURPOSE:
+#   Compiles the frontend bundle and publishes the build artifact.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: nodeVersion
+    type: string
+    default: '24.x'
+
+jobs:
+  - job: FrontendBuild
+    displayName: 'Frontend Compile and Artifact Publish'
+    steps:
+      - task: UseNode@1
+        inputs:
+          version: ${{ parameters.nodeVersion }}
+        displayName: 'Set Node.js LTS version'
+
+      - script: echo "##vso[task.setvariable variable=npm_config_cache]$(Pipeline.Workspace)/.npm"
+        displayName: 'Set npm cache path'
+
+      - task: Cache@2
+        inputs:
+          key: 'npm | "$(Agent.OS)" | frontend/package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: $(npm_config_cache)
+        displayName: 'Cache npm dependencies'
+
+      - script: npm ci
+        workingDirectory: frontend
+        displayName: 'Install dependencies'
+
+      - script: npm run build
+        workingDirectory: frontend
+        displayName: 'Build Vite application'
+
+      # Copy staticwebapp.config.json into dist so Azure SWA can locate it
+      - script: cp staticwebapp.config.json dist/
+        workingDirectory: frontend
+        displayName: 'Copy Static Web App config to build directory'
+
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: 'frontend/dist'
+          artifactName: 'frontend-dist'
+          publishLocation: 'pipeline'
+        displayName: 'Publish Frontend Artifact'

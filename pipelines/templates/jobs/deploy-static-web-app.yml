@@ -1,0 +1,146 @@
+# pipelines/templates/jobs/deploy-static-web-app.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Deploy to Azure Static Web App with Canary Routing
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: environment
+    type: string
+  - name: apiToken
+    type: string
+  - name: deployCanary
+    type: boolean
+    default: false
+  - name: environmentName
+    type: string
+    default: 'canary'
+  - name: appName
+    type: string
+    default: ''
+  - name: resourceGroupName
+    type: string
+    default: ''
+  - name: azureSubscription
+    type: string
+    default: ''
+
+jobs:
+  - deployment: DeployStaticWebApp
+    displayName: 'Deploy Static Web App to ${{ parameters.environment }}'
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                artifactName: 'frontend-dist'
+                targetPath: '$(Pipeline.Workspace)/frontend-dist'
+              displayName: 'Download Frontend Artifact'
+
+            # ── Deploy Static Web App (Canary Preview or Production) ───────
+            - task: AzureStaticWebApp@0
+              name: SwaDeploy
+              displayName: 'Deploy to Static Web App'
+              inputs:
+                workingDirectory: '$(Pipeline.Workspace)/frontend-dist'
+                app_location: '/'
+                output_location: ''
+                skip_app_build: true
+                skip_api_build: true
+                azure_static_web_apps_api_token: ${{ parameters.apiToken }}
+                ${{ if eq(parameters.deployCanary, true) }}:
+                  deployment_environment: ${{ parameters.environmentName }}
+
+            # ── Extract URL and Validate Deployment Health ─────────────────
+            - ${{ if eq(parameters.deployCanary, true) }}:
+              - task: AzureCLI@2
+                name: ValidateSwa
+                displayName: 'Extract URL and Run Validation (Canary)'
+                inputs:
+                  azureSubscription: ${{ parameters.azureSubscription }}
+                  scriptType: 'bash'
+                  scriptLocation: 'inlineScript'
+                  inlineScript: |
+                    set -e
+                    
+                    # Extract URL
+                    if [ -n "$(SwaDeploy.StaticWebAppWebUrl)" ]; then
+                      SWA_URL="$(SwaDeploy.StaticWebAppWebUrl)"
+                    else
+                      echo "SwaDeploy.StaticWebAppWebUrl was empty. Querying Azure CLI..."
+                      HOST=$(az staticwebapp environment show \
+                        --name ${{ parameters.appName }} \
+                        --resource-group ${{ parameters.resourceGroupName }} \
+                        --environment-name ${{ parameters.environmentName }} \
+                        --query "hostname" -o tsv)
+                      SWA_URL="https://$HOST"
+                    fi
+                    
+                    echo "Target Web App URL: $SWA_URL"
+                    # Set output variable for downstream jobs (like DAST)
+                    echo "##vso[task.setvariable variable=StaticWebAppUrl;isOutput=true]$SWA_URL"
+                    
+                    # Run health ping validation
+                    echo "Pinging URL to validate deployment..."
+                    for i in {1..6}; do
+                      echo "Attempt $i: Pinging $SWA_URL..."
+                      STATUS=$(curl -s -o /dev/null -w "%{http_code}" -k "$SWA_URL")
+                      if [ "$STATUS" -eq 200 ] || [ "$STATUS" -eq 302 ] || [ "$STATUS" -eq 201 ]; then
+                        echo "Deployment validated successfully! HTTP status: $STATUS"
+                        exit 0
+                      fi
+                      echo "HTTP status $STATUS. Retrying in 15 seconds..."
+                      sleep 15
+                    done
+                    
+                    echo "Validation Failed: Static Web App did not respond with 200/302/201."
+                    exit 1
+
+              # ── Shifting Traffic (Canary Split to 20%) ─────────────────────
+              - task: AzureCLI@2
+                displayName: 'Configure Canary Traffic Splitting'
+                inputs:
+                  azureSubscription: ${{ parameters.azureSubscription }}
+                  scriptType: 'bash'
+                  scriptLocation: 'inlineScript'
+                  inlineScript: |
+                    echo "Configuring Static Web App traffic routing..."
+                    az staticwebapp environment set \
+                      --name ${{ parameters.appName }} \
+                      --resource-group ${{ parameters.resourceGroupName }} \
+                      --environment-name ${{ parameters.environmentName }} \
+                      --traffic-weight 20
+
+            - ${{ if ne(parameters.deployCanary, true) }}:
+              - script: |
+                  set -e
+                  
+                  # Extract URL
+                  SWA_URL="$(SwaDeploy.StaticWebAppWebUrl)"
+                  if [ -z "$SWA_URL" ]; then
+                    echo "StaticWebAppWebUrl is empty."
+                    exit 1
+                  fi
+                  
+                  echo "Target Web App URL: $SWA_URL"
+                  # Set output variable for downstream jobs (like DAST)
+                  echo "##vso[task.setvariable variable=StaticWebAppUrl;isOutput=true]$SWA_URL"
+                  
+                  # Run health ping validation
+                  echo "Pinging URL to validate deployment..."
+                  for i in {1..6}; do
+                    echo "Attempt $i: Pinging $SWA_URL..."
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" -k "$SWA_URL")
+                    if [ "$STATUS" -eq 200 ] || [ "$STATUS" -eq 302 ] || [ "$STATUS" -eq 201 ]; then
+                      echo "Deployment validated successfully! HTTP status: $STATUS"
+                      exit 0
+                    fi
+                    echo "HTTP status $STATUS. Retrying in 15 seconds..."
+                    sleep 15
+                  done
+                  
+                  echo "Validation Failed: Static Web App did not respond with 200/302/201."
+                  exit 1
+                name: ValidateSwa
+                displayName: 'Extract URL and Run Validation'

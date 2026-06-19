@@ -1,0 +1,40 @@
+# pipelines/templates/jobs/frontend-test-validation.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Frontend CI Validation
+#
+# PURPOSE:
+#   Runs linting and validation on the frontend codebase.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: nodeVersion
+    type: string
+    default: '24.x'
+
+jobs:
+  - job: FrontendValidate
+    displayName: 'Frontend Lint and Check'
+    steps:
+      - task: UseNode@1
+        inputs:
+          version: ${{ parameters.nodeVersion }}
+        displayName: 'Set Node.js LTS version'
+
+      - script: echo "##vso[task.setvariable variable=npm_config_cache]$(Pipeline.Workspace)/.npm"
+        displayName: 'Set npm cache path'
+
+      - task: Cache@2
+        inputs:
+          key: 'npm | "$(Agent.OS)" | frontend/package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: $(npm_config_cache)
+        displayName: 'Cache npm dependencies'
+
+      - script: npm ci
+        workingDirectory: frontend
+        displayName: 'Install frontend dependencies'
+
+      - script: npm run lint
+        workingDirectory: frontend
+        displayName: 'Check code quality (ESLint)'

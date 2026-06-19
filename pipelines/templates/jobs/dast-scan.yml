@@ -1,0 +1,53 @@
+# pipelines/templates/jobs/dast-scan.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Frontend DAST Security Scan
+#
+# PURPOSE:
+#   Performs Dynamic Application Security Testing (DAST) using the OWASP ZAP
+#   Baseline Scan Docker container against the specified target URL.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: targetUrl
+    type: string
+  - name: environmentName
+    type: string
+    default: 'canary'
+  - name: dependsOn
+    type: string
+    default: 'DeployStaticWebApp'
+
+jobs:
+  - job: DastScan
+    displayName: 'DAST Vulnerability Scan (${{ parameters.environmentName }})'
+    dependsOn: ${{ parameters.dependsOn }}
+    variables:
+      targetUrlVar: ${{ parameters.targetUrl }}
+    steps:
+      - script: |
+          echo "Preparing DAST scan environment..."
+          # Pull the OWASP ZAP stable container image
+          docker pull owasp/zap2docker-stable:latest
+        displayName: 'Pull OWASP ZAP Docker Image'
+
+      - script: |
+          echo "Starting OWASP ZAP baseline scan against: ${{ parameters.targetUrl }}"
+          # Run the baseline scan and output reports to the workspace
+          # We use continueOnError or check exit code. ZAP exits with 1 or 2 if warnings/fails are found.
+          # We will write the report to a mounted volume
+          mkdir -p $(System.DefaultWorkingDirectory)/zap-reports
+          
+          docker run --user root -v $(System.DefaultWorkingDirectory)/zap-reports:/zap/wrk/:rw -t owasp/zap2docker-stable zap-baseline.py \
+            -t ${{ parameters.targetUrl }} \
+            -r zap_report.html || SCAN_EXIT_CODE=$?
+          
+          echo "ZAP Scan completed with exit code: ${SCAN_EXIT_CODE:-0}"
+        displayName: 'Execute ZAP Baseline Scan'
+
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: '$(System.DefaultWorkingDirectory)/zap-reports'
+          artifactName: 'DAST-Report-${{ parameters.environmentName }}'
+          publishLocation: 'pipeline'
+        displayName: 'Publish DAST Report Artifact'
+        condition: always()

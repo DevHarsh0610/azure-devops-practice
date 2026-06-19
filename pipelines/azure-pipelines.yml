@@ -19,6 +19,9 @@ trigger:
       - develop
       - release/*
       - main
+  paths:
+    include:
+      - backend/**
 
 pr:
   branches:
@@ -26,15 +29,23 @@ pr:
       - develop
       - release/*
       - main
+  paths:
+    include:
+      - backend/**
 
 pool:
-  vmImage: ubuntu-latest
+  name: MyCustomPool
 
 variables:
-  imageRepository: 'dockerharsh10/devops-practice-backend'
-  containerRegistry: 'dockerhub-service-principal'
-  tag: '$(Build.BuildId)'
-  azureSubscription: 'azure-arm-connection'
+  - group: backend-release-vars
+  # - name: imageRepository
+  #   value: 'dockerharsh10/devops-practice-backend'
+  # - name: containerRegistry
+  #   value: 'dockerhub-service-principal'
+  # - name: tag
+  #   value: '$(Build.BuildId)'
+  # - name: azureSubscription
+  #   value: 'azure-arm-connection'
 
 stages:
   # ── Stage 1: CI Validation ─────────────────────────────────────────────────
@@ -45,7 +56,11 @@ stages:
     jobs:
       - template: templates/jobs/validate-and-test.yml
         parameters:
-          nodeVersion: '20.x'
+          nodeVersion: '24.x'
+      - template: templates/jobs/trivy-fs-scan.yml
+        parameters:
+          scanDir: 'backend'
+          severity: 'CRITICAL'
 
   # ── Stage 2: Build & Push Docker Image ────────────────────────────────────
   # Runs on develop, release/*, and main — skipped on feature/bugfix branches.
@@ -60,6 +75,12 @@ stages:
           imageRepository: $(imageRepository)
           containerRegistry: $(containerRegistry)
           tag: $(tag)
+      - template: templates/jobs/trivy-image-scan.yml
+        parameters:
+          imageRepository: $(imageRepository)
+          tag: $(tag)
+          containerRegistry: $(containerRegistry)
+          severity: 'CRITICAL'
 
   # ── Stage 3: Deploy to Development ────────────────────────────────────────
   # Deploys after image is built. Targets the 'development' Azure DevOps
@@ -123,6 +144,9 @@ stages:
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)
+          deployToSlot: true
+          resourceGroupName: $(resourceGroupName)
+          validateUrl: 'https://my-unique-devops-app-123-staging.azurewebsites.net/health'
 
   # ── Stage 4: Deploy to Staging ──────────────────────────────────────────
   # Runs on main after the release branch has been merged and signed off.
@@ -139,6 +163,9 @@ stages:
           azureSubscription: $(azureSubscription)
           imageRepository: $(imageRepository)
           tag: $(tag)
+          deployToSlot: true
+          resourceGroupName: $(resourceGroupName)
+          validateUrl: 'https://my-unique-devops-app-123-staging.azurewebsites.net/health'
   
   - stage: Deploy_DR
     displayName: 'Deploy to DR Environment'

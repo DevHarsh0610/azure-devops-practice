@@ -1,41 +1,6 @@
 # templates/jobs/deploy-webapp.yml
 # ─────────────────────────────────────────────────────────────────────────────
-# Job Template: Deploy Azure Web App Container
-#
-# PURPOSE:
-#   Deploys a Docker container image to an Azure App Service (Web App for
-#   Containers). This template is designed to be reused across multiple
-#   environments (dev, staging, production) simply by passing different
-#   parameters.
-#
-# HOW TO USE:
-#   In your main pipeline stage, reference this template like this:
-#
-#     - stage: Deploy_Dev
-#       jobs:
-#         - template: templates/jobs/deploy-webapp.yml
-#           parameters:
-#             environment: 'development'
-#             appName: 'my-unique-devops-app-123'
-#             azureSubscription: 'azure-arm-connection'
-#             imageRepository: $(imageRepository)
-#             tag: $(tag)
-#
-# WHY THE STAGE STAYS IN THE MAIN PIPELINE:
-#   The `stage` block in the main pipeline is where you configure:
-#     - Which Azure DevOps Environment to target (for approval gates)
-#     - The `dependsOn` order between stages
-#     - Branch conditions (e.g. only deploy from main)
-#   These are orchestration concerns. The actual deployment steps (this file)
-#   are reusable logic that doesn't change between environments.
-#
-# PARAMETERS:
-#   environment       → Azure DevOps Environment name (used for approval gates)
-#   appName           → Azure App Service name to deploy to
-#   azureSubscription → Azure service connection name
-#   imageRepository   → Docker image name (e.g. dockerharsh10/devops-practice-backend)
-#   tag               → Image tag to deploy (usually the Build.BuildId)
-#   vmImage           → Agent pool VM image (default: ubuntu-latest)
+# Job Template: Deploy Azure Web App Container with optional Blue-Green slots
 # ─────────────────────────────────────────────────────────────────────────────
 
 parameters:
@@ -58,24 +23,73 @@ parameters:
     type: string
     default: 'ubuntu-latest'
 
+  - name: deployToSlot
+    type: boolean
+    default: false
+
+  - name: resourceGroupName
+    type: string
+    default: ''
+
+  - name: slotName
+    type: string
+    default: 'staging'
+
+  - name: validateUrl
+    type: string
+    default: ''
+
 jobs:
   - deployment: DeployWebApp
     displayName: 'Deploy to ${{ parameters.environment }}'
-
-    # The environment name here links to Azure DevOps Environments.
-    # You can add approval gates, deployment history, and security checks there.
     environment: ${{ parameters.environment }}
-
     pool:
       vmImage: ${{ parameters.vmImage }}
-
     strategy:
       runOnce:
         deploy:
           steps:
+            # ── Standard Deployment or Deploy to Slot ──────────────────────
             - task: AzureWebAppContainer@1
               displayName: 'Deploy Container to Azure Web App'
               inputs:
                 azureSubscription: ${{ parameters.azureSubscription }}
                 appName: ${{ parameters.appName }}
                 containers: '${{ parameters.imageRepository }}:${{ parameters.tag }}'
+                deployToSlotOrASE: ${{ parameters.deployToSlot }}
+                ${{ if eq(parameters.deployToSlot, true) }}:
+                  resourceGroupName: ${{ parameters.resourceGroupName }}
+                  slotName: ${{ parameters.slotName }}
+
+            # ── Deployment Validation (Smoke Test / Health Ping) ───────────
+            - script: |
+                echo "Initiating deployment validation for ${{ parameters.environment }}..."
+                # Extract protocol and hostname for logging
+                echo "Target URL: ${{ parameters.validateUrl }}"
+                
+                for i in {1..6}; do
+                  echo "Attempt $i: Pinging health endpoint..."
+                  STATUS=$(curl -s -o /dev/null -w "%{http_code}" -k "${{ parameters.validateUrl }}")
+                  if [ "$STATUS" -eq 200 ] || [ "$STATUS" -eq 302 ] || [ "$STATUS" -eq 201 ]; then
+                    echo "Validation succeeded! HTTP Status code: $STATUS."
+                    exit 0
+                  fi
+                  echo "Status code $STATUS. Retrying in 15 seconds..."
+                  sleep 15
+                done
+                echo "Validation Failed: App did not respond with 200/302/201 within validation timeout."
+                exit 1
+              displayName: 'Verify App Deployment Health'
+              condition: and(succeeded(), ne('${{ parameters.validateUrl }}', ''))
+
+            # ── Zero-Downtime Swap (Staging -> Production) ─────────────────
+            - task: AzureAppServiceManage@0
+              displayName: 'Swap Blue/Green Slots'
+              condition: and(succeeded(), eq(${{ parameters.deployToSlot }}, true))
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                Action: 'Swap Slots'
+                WebAppName: ${{ parameters.appName }}
+                ResourceGroupName: ${{ parameters.resourceGroupName }}
+                SourceSlot: ${{ parameters.slotName }}
+                TargetSlot: 'production'

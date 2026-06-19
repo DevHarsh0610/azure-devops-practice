@@ -1,0 +1,35 @@
+# pipelines/templates/jobs/trivy-fs-scan.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Trivy Filesystem Scan
+#
+# PURPOSE:
+#   Downloads and installs Trivy (if not present) and performs a filesystem
+#   vulnerability scan on the specified directory, failing on CRITICAL issues.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: scanDir
+    type: string
+    default: '.'
+  - name: severity
+    type: string
+    default: 'CRITICAL'
+
+jobs:
+  - job: TrivyFsScan
+    displayName: 'Trivy Filesystem Vulnerability Scan'
+    steps:
+      - script: |
+          set -e
+          # Create a bin directory in agent work folder to install Trivy
+          mkdir -p $(Agent.TempDirectory)/trivy-bin
+          export PATH=$(Agent.TempDirectory)/trivy-bin:$PATH
+
+          if ! command -v trivy &> /dev/null; then
+            echo "Installing Trivy to Agent Temp Directory..."
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(Agent.TempDirectory)/trivy-bin
+          fi
+
+          echo "Running Trivy Filesystem Scan on ${{ parameters.scanDir }} for ${{ parameters.severity }} vulnerabilities..."
+          trivy fs --severity ${{ parameters.severity }} --exit-code 1 ${{ parameters.scanDir }}
+        displayName: 'Install and Run Trivy FS Scan'

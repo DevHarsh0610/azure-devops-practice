@@ -17,7 +17,7 @@
 parameters:
   - name: nodeVersion
     type: string
-    default: '20.x'
+    default: '24.x'
 
 jobs:
   - job: ValidateAndTest
@@ -27,13 +27,18 @@ jobs:
       - task: UseNode@1
         inputs:
           version: ${{ parameters.nodeVersion }}
-        displayName: 'Set Node.js version'
+        displayName: 'Set Node.js LTS version'
 
-      - script: |
-          node --version
-          npm --version
-        workingDirectory: backend
-        displayName: 'Check Node.js and npm version'
+      - script: echo "##vso[task.setvariable variable=npm_config_cache]$(Pipeline.Workspace)/.npm"
+        displayName: 'Set npm cache path'
+
+      - task: Cache@2
+        inputs:
+          key: 'npm | "$(Agent.OS)" | backend/package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: $(npm_config_cache)
+        displayName: 'Cache npm dependencies'
 
       - script: npm ci
         workingDirectory: backend

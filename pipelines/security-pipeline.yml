@@ -1,0 +1,37 @@
+# pipelines/security-pipeline.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Security Scan Pipeline
+#
+# PURPOSE:
+#   Performs filesystem vulnerability scans using Trivy on the codebase.
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+  paths:
+    exclude:
+      - '*.md'
+      - '.gitignore'
+
+pr:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+
+pool:
+  name: MyCustomPool
+
+stages:
+  - stage: SecurityScan
+    displayName: 'Security Vulnerability Scan'
+    jobs:
+      - template: templates/jobs/trivy-fs-scan.yml
+        parameters:
+          scanDir: '.'
+          severity: 'CRITICAL'

@@ -38,14 +38,14 @@ pool:
 
 variables:
   - group: backend-release-vars
-  # - name: imageRepository
-  #   value: 'dockerharsh10/devops-practice-backend'
-  # - name: containerRegistry
-  #   value: 'dockerhub-service-principal'
-  # - name: tag
-  #   value: '$(Build.BuildId)'
-  # - name: azureSubscription
-  #   value: 'azure-arm-connection'
+  - name: imageRepository
+    value: 'dockerharsh10/devops-practice-backend'
+  - name: containerRegistry
+    value: 'dockerhub-service-principal'
+  - name: tag
+    value: '$(Build.BuildId)'
+  - name: azureSubscription
+    value: 'azure-arm-connection'
 
 stages:
   # ── Stage 1: CI Validation ─────────────────────────────────────────────────

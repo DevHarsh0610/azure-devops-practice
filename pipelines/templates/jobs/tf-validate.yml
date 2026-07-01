@@ -1,0 +1,63 @@
+# pipelines/templates/jobs/tf-validate.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Validate Terraform HCL Code Quality & Security Policy (SAST)
+#
+# PURPOSE:
+#   Validates Terraform formatting, performs schema validation, runs tflint,
+#   and executes Checkov static analysis (SAST) for security policy checks.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: terraformVersion
+    type: string
+    default: 'latest'
+  - name: workingDirectory
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/terraform'
+
+jobs:
+  - job: TF_Validate
+    displayName: 'Terraform Validate and Security Scan'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - task: TerraformInstaller@1
+        displayName: 'Install Terraform ${{ parameters.terraformVersion }}'
+        inputs:
+          terraformVersion: ${{ parameters.terraformVersion }}
+
+      - script: |
+          echo "Checking HCL formatting..."
+          terraform fmt -check -recursive
+        workingDirectory: ${{ parameters.workingDirectory }}
+        displayName: 'Format Check'
+
+      - script: |
+          echo "Initializing Terraform without backend..."
+          terraform init -backend=false
+          echo "Validating syntax..."
+          terraform validate
+        workingDirectory: ${{ parameters.workingDirectory }}
+        displayName: 'Validate HCL Syntax'
+
+      # Install and Run TFLint
+      - script: |
+          echo "Installing TFLint..."
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+          tflint --init
+          echo "Running TFLint..."
+          tflint -f compact
+        workingDirectory: ${{ parameters.workingDirectory }}
+        displayName: 'Run TFLint'
+        continueOnError: true # Don't fail the pipeline for warnings unless desired
+
+      # Install and Run Checkov (IaC Security Scanner)
+      - script: |
+          echo "Installing Checkov..."
+          pip3 install --upgrade pip
+          pip3 install checkov
+          echo "Running Checkov SAST scan..."
+          checkov --directory . --framework terraform --skip-check CKV_AZURE_33,CKV_AZURE_35,CKV_AZURE_44
+        workingDirectory: ${{ parameters.workingDirectory }}
+        displayName: 'Run Checkov SAST Policy Scan'
+        continueOnError: true # Allows reviewing scans without stopping dev iteration

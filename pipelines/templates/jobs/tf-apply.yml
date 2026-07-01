@@ -1,0 +1,64 @@
+# pipelines/templates/jobs/tf-apply.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Run Terraform Apply
+#
+# PURPOSE:
+#   Downloads the generated plan artifact and applies it against the Azure
+#   infrastructure. Designed as a deployment job to support approval gates.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: environment
+    type: string
+  - name: backendResourceGroup
+    type: string
+  - name: backendStorageAccount
+    type: string
+  - name: backendContainerName
+    type: string
+  - name: terraformVersion
+    type: string
+    default: 'latest'
+
+jobs:
+  - deployment: TF_Apply_${{ parameters.environment }}
+    displayName: 'Apply Changes — ${{ parameters.environment }}'
+    environment: ${{ parameters.environment }}
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - task: DownloadPipelineArtifact@2
+              displayName: 'Download Plan Artifact'
+              inputs:
+                artifactName: 'tf-plan-${{ parameters.environment }}'
+                targetPath: '$(Pipeline.Workspace)/tf-plan'
+
+            - task: TerraformInstaller@1
+              displayName: 'Install Terraform'
+              inputs:
+                terraformVersion: ${{ parameters.terraformVersion }}
+
+            - script: |
+                set -e
+                echo "Re-initializing Terraform backend..."
+                terraform init \
+                  -backend-config="resource_group_name=${{ parameters.backendResourceGroup }}" \
+                  -backend-config="storage_account_name=${{ parameters.backendStorageAccount }}" \
+                  -backend-config="container_name=${{ parameters.backendContainerName }}" \
+                  -backend-config="key=${{ parameters.environment }}/terraform.tfstate"
+
+                echo "Selecting workspace: ${{ parameters.environment }}"
+                terraform workspace select ${{ parameters.environment }}
+
+                echo "Applying changes..."
+                terraform apply -auto-approve "tfplan-${{ parameters.environment }}"
+              workingDirectory: '$(Pipeline.Workspace)/tf-plan'
+              displayName: 'Terraform Apply'
+              env:
+                ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+                ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+                ARM_TENANT_ID: $(ARM_TENANT_ID)
+                ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)

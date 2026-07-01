@@ -1,0 +1,80 @@
+# pipelines/templates/jobs/tf-plan.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Run Terraform Plan and Save Artifact
+#
+# PURPOSE:
+#   Initializes Terraform, selects the workspace, runs a dry-run plan against
+#   the environment tfvars, and publishes the binary plan as a pipeline artifact.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: environment
+    type: string
+  - name: backendResourceGroup
+    type: string
+  - name: backendStorageAccount
+    type: string
+  - name: backendContainerName
+    type: string
+  - name: terraformVersion
+    type: string
+    default: 'latest'
+  - name: workingDirectory
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/terraform'
+  - name: additionalArgs
+    type: string
+    default: ''
+
+jobs:
+  - job: TF_Plan_${{ parameters.environment }}
+    displayName: 'Generate Plan — ${{ parameters.environment }}'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - task: TerraformInstaller@1
+        displayName: 'Install Terraform'
+        inputs:
+          terraformVersion: ${{ parameters.terraformVersion }}
+
+      - script: |
+          set -e
+          echo "Initializing Terraform backend..."
+          terraform init \
+            -backend-config="resource_group_name=${{ parameters.backendResourceGroup }}" \
+            -backend-config="storage_account_name=${{ parameters.backendStorageAccount }}" \
+            -backend-config="container_name=${{ parameters.backendContainerName }}" \
+            -backend-config="key=${{ parameters.environment }}/terraform.tfstate"
+
+          echo "Selecting/Creating workspace: ${{ parameters.environment }}"
+          terraform workspace select -or-create ${{ parameters.environment }}
+
+          echo "Executing Terraform Plan..."
+          terraform plan \
+            -var-file="environments/${{ parameters.environment }}.tfvars" \
+            -out="tfplan-${{ parameters.environment }}" \
+            ${{ parameters.additionalArgs }}
+
+          echo "Summarizing plan..."
+          terraform show -no-color "tfplan-${{ parameters.environment }}" > plan-raw.txt
+          # Simple regex to count additions, modifications, destructions
+          ADD=$(grep -E 'Plan: [0-9]+ to add' plan-raw.txt | sed -E 's/Plan: ([0-9]+) to add.*/\1/')
+          CHANGE=$(grep -E '[0-9]+ to change' plan-raw.txt | sed -E 's/.*, ([0-9]+) to change.*/\1/')
+          DESTROY=$(grep -E '[0-9]+ to destroy' plan-raw.txt | sed -E 's/.*, ([0-9]+) to destroy.*/\1/')
+          
+          echo "Plan result summary: Add: ${ADD:-0}, Change: ${CHANGE:-0}, Destroy: ${DESTROY:-0}"
+        workingDirectory: ${{ parameters.workingDirectory }}
+        displayName: 'Terraform Plan'
+        env:
+          ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+          ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+          ARM_TENANT_ID: $(ARM_TENANT_ID)
+          ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+
+      # Publish the plan output and the lock file so apply job has the exact same context
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish Plan Artifact'
+        inputs:
+          targetPath: '${{ parameters.workingDirectory }}'
+          artifactName: 'tf-plan-${{ parameters.environment }}'
+          publishLocation: 'pipeline'

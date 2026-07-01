@@ -1,0 +1,246 @@
+# pipelines/terraform-pipeline.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Terraform Infrastructure CI/CD Pipeline Orchestrator
+#
+# PURPOSE:
+#   Validates infrastructure code quality and provisions/configures Azure
+#   environments dynamically matching application branches.
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+  paths:
+    include:
+      - terraform/**
+      - pipelines/terraform-pipeline.yml
+
+pr:
+  branches:
+    include:
+      - develop
+      - release/*
+      - main
+  paths:
+    include:
+      - terraform/**
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: terraform-vars # Pre-requisite: Create in ADO containing ARM_*, TF_STATE_*
+  - name: azureSubscription
+    value: 'azure-arm-connection'
+  - name: terraformVersion
+    value: '1.8.5'
+
+stages:
+  # ── Stage 1: Validation and Code Quality Gate ─────────────────────────────
+  - stage: TF_Validate
+    displayName: 'Validate IaC'
+    jobs:
+      - template: templates/jobs/tf-validate.yml
+        parameters:
+          terraformVersion: $(terraformVersion)
+
+  # ── Stage 2: Bootstrap Remote State Storage ───────────────────────────────
+  # Runs on pushes only. Idempotently ensures the backend storage container exists.
+  - stage: TF_Bootstrap
+    displayName: 'Bootstrap Backend'
+    dependsOn: TF_Validate
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - template: templates/jobs/tf-bootstrap.yml
+        parameters:
+          azureSubscription: $(azureSubscription)
+          resourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          storageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          containerName: $(TF_STATE_CONTAINER)
+          location: 'koreacentral'
+
+  # ── Stage 3: Import Pre-existing Resources (Prod only, idempotent) ───────
+  - stage: TF_Import_Dev
+    displayName: 'Import Dev State'
+    dependsOn: TF_Bootstrap
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - template: templates/jobs/tf-import.yml
+        parameters:
+          environment: 'dev'
+          azureSubscription: $(azureSubscription)
+          subscriptionId: $(ARM_SUBSCRIPTION_ID)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+
+  - stage: TF_Import_QA
+    displayName: 'Import QA State'
+    dependsOn: TF_Bootstrap
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: templates/jobs/tf-import.yml
+        parameters:
+          environment: 'qa'
+          azureSubscription: $(azureSubscription)
+          subscriptionId: $(ARM_SUBSCRIPTION_ID)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+
+  - stage: TF_Import_Prod
+    displayName: 'Import Prod State'
+    dependsOn: TF_Bootstrap
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/tf-import.yml
+        parameters:
+          environment: 'prod'
+          azureSubscription: $(azureSubscription)
+          subscriptionId: $(ARM_SUBSCRIPTION_ID)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+          resourceGroup: 'devops-practice-rg'
+          appName: 'my-unique-devops-app-123'
+
+  # ── Stage 4: Dev Deployments ──────────────────────────────────────────────
+  - stage: TF_Plan_Dev
+    displayName: 'Plan Dev'
+    dependsOn: TF_Import_Dev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - template: templates/jobs/tf-plan.yml
+        parameters:
+          environment: 'dev'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+          additionalArgs: '-var="subscription_id=$(ARM_SUBSCRIPTION_ID)" -var="db_admin_password=$(DB_ADMIN_PASSWORD_DEV)" -var="jwt_access_secret=$(JWT_ACCESS_SECRET_DEV)" -var="jwt_refresh_secret=$(JWT_REFRESH_SECRET_DEV)"'
+
+  - stage: TF_Apply_Dev
+    displayName: 'Apply Dev'
+    dependsOn: TF_Plan_Dev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - template: templates/jobs/tf-apply.yml
+        parameters:
+          environment: 'tf-development'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+
+  # ── Stage 5: QA/UAT Deployments ───────────────────────────────────────────
+  - stage: TF_Plan_QA
+    displayName: 'Plan QA'
+    dependsOn: TF_Import_QA
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: templates/jobs/tf-plan.yml
+        parameters:
+          environment: 'qa'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+          additionalArgs: '-var="subscription_id=$(ARM_SUBSCRIPTION_ID)" -var="db_admin_password=$(DB_ADMIN_PASSWORD_QA)" -var="jwt_access_secret=$(JWT_ACCESS_SECRET_QA)" -var="jwt_refresh_secret=$(JWT_REFRESH_SECRET_QA)"'
+
+  - stage: TF_Apply_QA
+    displayName: 'Apply QA'
+    dependsOn: TF_Plan_QA
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: templates/jobs/tf-apply.yml
+        parameters:
+          environment: 'tf-qa'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+
+  - stage: TF_Plan_UAT
+    displayName: 'Plan UAT'
+    dependsOn: TF_Apply_QA
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: templates/jobs/tf-plan.yml
+        parameters:
+          environment: 'uat'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+          additionalArgs: '-var="subscription_id=$(ARM_SUBSCRIPTION_ID)" -var="db_admin_password=$(DB_ADMIN_PASSWORD_UAT)" -var="jwt_access_secret=$(JWT_ACCESS_SECRET_UAT)" -var="jwt_refresh_secret=$(JWT_REFRESH_SECRET_UAT)"'
+
+  - stage: TF_Apply_UAT
+    displayName: 'Apply UAT'
+    dependsOn: TF_Plan_UAT
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: templates/jobs/tf-apply.yml
+        parameters:
+          environment: 'tf-uat'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+
+  # ── Stage 6: Staging/Production Deployments ────────────────────────────────
+  - stage: TF_Plan_Staging
+    displayName: 'Plan Staging'
+    dependsOn: TF_Import_Prod
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/tf-plan.yml
+        parameters:
+          environment: 'staging'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+          additionalArgs: '-var="subscription_id=$(ARM_SUBSCRIPTION_ID)" -var="db_admin_password=$(DB_ADMIN_PASSWORD_STAGING)" -var="jwt_access_secret=$(JWT_ACCESS_SECRET_STAGING)" -var="jwt_refresh_secret=$(JWT_REFRESH_SECRET_STAGING)"'
+
+  - stage: TF_Apply_Staging
+    displayName: 'Apply Staging'
+    dependsOn: TF_Plan_Staging
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/tf-apply.yml
+        parameters:
+          environment: 'tf-staging'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+
+  - stage: TF_Plan_Prod
+    displayName: 'Plan Prod'
+    dependsOn: TF_Apply_Staging
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/tf-plan.yml
+        parameters:
+          environment: 'prod'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)
+          additionalArgs: '-var="subscription_id=$(ARM_SUBSCRIPTION_ID)" -var="db_admin_password=$(DB_ADMIN_PASSWORD_PROD)" -var="jwt_access_secret=$(JWT_ACCESS_SECRET_PROD)" -var="jwt_refresh_secret=$(JWT_REFRESH_SECRET_PROD)"'
+
+  - stage: TF_Apply_Prod
+    displayName: 'Apply Prod'
+    dependsOn: TF_Plan_Prod
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: templates/jobs/tf-apply.yml
+        parameters:
+          environment: 'tf-production'
+          terraformVersion: $(terraformVersion)
+          backendResourceGroup: $(TF_STATE_RESOURCE_GROUP)
+          backendStorageAccount: $(TF_STATE_STORAGE_ACCOUNT)
+          backendContainerName: $(TF_STATE_CONTAINER)

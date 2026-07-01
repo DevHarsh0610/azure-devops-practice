@@ -1,0 +1,86 @@
+# pipelines/templates/jobs/tf-bootstrap.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Bootstrap Terraform Remote State Backend
+#
+# PURPOSE:
+#   Idempotently provisions the Azure Resource Group, Storage Account, and Blob
+#   Container required to host Terraform remote state files.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: azureSubscription
+    type: string
+  - name: resourceGroup
+    type: string
+    default: 'tf-state-rg'
+  - name: storageAccount
+    type: string
+  - name: containerName
+    type: string
+    default: 'tfstate'
+  - name: location
+    type: string
+    default: 'koreacentral'
+
+jobs:
+  - job: TF_Bootstrap_State
+    displayName: 'Bootstrap Remote State Backend'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - task: AzureCLI@2
+        displayName: 'Create Resource Group and Storage Container'
+        inputs:
+          azureSubscription: ${{ parameters.azureSubscription }}
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            set -e
+            echo "1. Checking/Creating Resource Group: ${{ parameters.resourceGroup }}"
+            az group create --name ${{ parameters.resourceGroup }} --location ${{ parameters.location }}
+
+            echo "2. Checking/Creating Storage Account: ${{ parameters.storageAccount }}"
+            # Check if storage account name is already taken
+            SA_CHECK=$(az storage account check-name --name ${{ parameters.storageAccount }} --query "nameAvailable" -o tsv)
+            if [ "$SA_CHECK" = "true" ]; then
+              echo "Storage account does not exist. Creating..."
+              az storage account create \
+                --name ${{ parameters.storageAccount }} \
+                --resource-group ${{ parameters.resourceGroup }} \
+                --location ${{ parameters.location }} \
+                --sku Standard_LRS \
+                --kind StorageV2 \
+                --min-tls-version TLS1_2 \
+                --allow-blob-public-access false \
+                --https-only true
+            else
+              # Verify if we own the storage account in our resource group
+              OWNED=$(az storage account list --query "[?name=='${{ parameters.storageAccount }}'].resourceGroup" -o tsv)
+              if [ -n "$OWNED" ]; then
+                echo "Storage account exists and is owned by resource group: $OWNED"
+              else
+                echo "ERROR: Storage account name '${{ parameters.storageAccount }}' is taken by another tenant or subscription!"
+                exit 1
+              fi
+            fi
+
+            echo "3. Enabling blob soft delete and versioning"
+            az storage account blob-service-properties update \
+              --account-name ${{ parameters.storageAccount }} \
+              --resource-group ${{ parameters.resourceGroup }} \
+              --enable-delete-retention true \
+              --delete-retention-days 7
+
+            echo "4. Checking/Creating Blob Container: ${{ parameters.containerName }}"
+            # Fetch storage account connection string
+            CONNECTION_STRING=$(az storage account show-connection-string \
+              --name ${{ parameters.storageAccount }} \
+              --resource-group ${{ parameters.resourceGroup }} \
+              --query connectionString -o tsv)
+
+            az storage container create \
+              --name ${{ parameters.containerName }} \
+              --connection-string "$CONNECTION_STRING" \
+              --public-access off
+            
+            echo "Bootstrap completed successfully!"

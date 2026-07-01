@@ -1,0 +1,91 @@
+# pipelines/templates/jobs/tf-import.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Template: Import Manually Provisioned Azure Resources
+#
+# PURPOSE:
+#   Idempotently imports pre-existing manual Azure resources (Resource Group,
+#   Web App) into the Terraform state file of the "prod" workspace.
+# ─────────────────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: environment
+    type: string
+  - name: azureSubscription
+    type: string
+  - name: resourceGroup
+    type: string
+    default: 'devops-practice-rg'
+  - name: appName
+    type: string
+    default: 'my-unique-devops-app-123'
+  - name: subscriptionId
+    type: string
+  - name: backendResourceGroup
+    type: string
+  - name: backendStorageAccount
+    type: string
+  - name: backendContainerName
+    type: string
+  - name: workingDirectory
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/terraform'
+
+jobs:
+  - job: TF_Import_${{ parameters.environment }}
+    displayName: 'Check and Import Existing Resources — ${{ parameters.environment }}'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - task: TerraformInstaller@1
+        displayName: 'Install Terraform'
+
+      - script: |
+          set -e
+          echo "Initializing Terraform backend..."
+          terraform init \
+            -backend-config="resource_group_name=${{ parameters.backendResourceGroup }}" \
+            -backend-config="storage_account_name=${{ parameters.backendStorageAccount }}" \
+            -backend-config="container_name=${{ parameters.backendContainerName }}" \
+            -backend-config="key=${{ parameters.environment }}/terraform.tfstate"
+
+          # Switch to environment workspace
+          echo "Selecting/Creating workspace: ${{ parameters.environment }}"
+          terraform workspace select -or-create ${{ parameters.environment }}
+
+          # Only attempt import in Prod environment where resources exist
+          if [ "${{ parameters.environment }}" = "prod" ]; then
+            echo "Analyzing workspace state for Production..."
+            
+            # Check Resource Group
+            if ! terraform state list | grep -q "module.networking.azurerm_resource_group.main"; then
+              echo "Importing existing resource group: ${{ parameters.resourceGroup }}..."
+              terraform import \
+                -var="subscription_id=${{ parameters.subscriptionId }}" \
+                -var="db_admin_password=DummyPassword123!" \
+                module.networking.azurerm_resource_group.main \
+                /subscriptions/${{ parameters.subscriptionId }}/resourceGroups/${{ parameters.resourceGroup }} || echo "Import of Resource Group skipped/failed."
+            else
+              echo "Resource Group is already tracked in state."
+            fi
+
+            # Check App Service
+            if ! terraform state list | grep -q "module.app_service.azurerm_linux_web_app.main"; then
+              echo "Importing existing App Service: ${{ parameters.appName }}..."
+              terraform import \
+                -var="subscription_id=${{ parameters.subscriptionId }}" \
+                -var="db_admin_password=DummyPassword123!" \
+                module.app_service.azurerm_linux_web_app.main \
+                /subscriptions/${{ parameters.subscriptionId }}/resourceGroups/${{ parameters.resourceGroup }}/providers/Microsoft.Web/sites/${{ parameters.appName }} || echo "Import of App Service skipped/failed."
+            else
+              echo "App Service is already tracked in state."
+            fi
+          else
+            echo "Skipping import check for non-production environment: ${{ parameters.environment }}"
+          fi
+        workingDirectory: ${{ parameters.workingDirectory }}
+        displayName: 'Import Manual Resources'
+        env:
+          ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+          ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+          ARM_TENANT_ID: $(ARM_TENANT_ID)
+          ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
